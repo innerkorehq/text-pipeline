@@ -1,0 +1,48 @@
+[project]
+name = "tts-text-pipeline"
+version = "0.1.0"
+description = "Consolidated text-preprocessing CLI for vidgen — IndicNER, spaCy NER, Qwen3.5 phonetic respelling, NeMo (English) and indic-text-normalization (Indic) semiotic normalization, in ONE venv instead of five. These five stages all run on every TTS call regardless of which synthesis engine/voice is selected, so they're consolidated to avoid duplicating torch/transformers across five separate venvs."
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    # Shared by indic-ner + qwen3-phonetic (and transitively by spacy/nemo)
+    "torch>=2.4",
+    # Qwen3.5 (Qwen3_5ForConditionalGeneration, an image-text-to-text/VLM
+    # architecture even though we only ever use it for text) needs the
+    # `qwen3_5` model support that landed in transformers 5.x.
+    "transformers>=5.12",
+    "huggingface-hub>=0.25",
+    "accelerate",
+    "pillow",
+    # AutoProcessor.from_pretrained() also loads Qwen3.5's video sub-processor
+    # (it's a Qwen3-VL-family architecture), which hard-requires torchvision
+    # to even import — even though this engine only ever sends text.
+    "torchvision",
+
+    # spacy-ner
+    "spacy>=3.8",
+    "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
+    # spacy.cli imports click directly but doesn't declare it as a hard dep
+    # (pulled in transitively via typer in some installs, not this one).
+    "click",
+
+    # nemo-text-norm + indic-text-norm's own deps, pinned here so `uv sync`
+    # resolves them normally. Deliberately NOT listing `nemo_text_processing`,
+    # `indic_text_normalization`, or `pynini` themselves here — pynini has no
+    # macOS wheel on PyPI (manylinux-only, built from source against
+    # Homebrew's OpenFST in setup.sh) and both packages declare hard pynini
+    # pins that would make `uv sync` try (and fail) to resolve it. All three
+    # are installed manually in setup.sh after these pure-Python deps go in.
+    "cdifflib",
+    "editdistance",
+    "inflect",
+    "joblib",
+    "pandas",
+    "regex",
+    "sacremoses>=0.0.43",
+    "tqdm>=4.41.0",
+    "wget",
+    "wrapt",
+]
+
+[tool.uv]
+package = false
