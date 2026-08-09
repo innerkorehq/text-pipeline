@@ -1,20 +1,24 @@
 #!/usr/bin/env python
 """
-Consolidated text-preprocessing CLI — IndicNER, spaCy NER, Qwen3.5-0.8B
-phonetic respelling, NeMo (English) and indic-text-normalization (Indic)
-semiotic normalization, all in ONE venv instead of five. These five stages
-all run on every TTS call regardless of which synthesis engine/voice is
-selected (entity detection -> phonetic rewrite -> number/date normalization),
-so splitting them across five separate venvs was pure duplication (five
-copies of torch/transformers for stages that are never optional).
+Consolidated text-preprocessing CLI — IndicNER, spaCy NER, word-level
+Hindi/English LID (L3Cube HingBERT), Qwen3.5-0.8B phonetic respelling, NeMo
+(English) and indic-text-normalization (Indic) semiotic normalization, all
+in ONE venv instead of six. These stages all run on every TTS call
+regardless of which synthesis engine/voice is selected (entity detection ->
+phonetic rewrite -> number/date normalization; word-lid additionally for
+the "hinglish-lid" pipeline's Route B), so splitting them across separate
+venvs was pure duplication (separate copies of torch/transformers for
+stages that are never optional).
 
-Request (stdin JSON): {"engine": "indic-ner" | "spacy-ner" | "qwen3-phonetic"
-                                 | "nemo-text-norm" | "indic-text-norm",
+Request (stdin JSON): {"engine": "indic-ner" | "spacy-ner" | "word-lid"
+                                 | "qwen3-phonetic" | "nemo-text-norm"
+                                 | "indic-text-norm",
                         ...engine-specific fields, unchanged from each
                         engine's own former synth.py contract}
 
   indic-ner:        {"mode": "tag", "text": "..."}
   spacy-ner:        {"mode": "tag", "text": "..."}
+  word-lid:         {"mode": "tag", "text": "..."}
   qwen3-phonetic:   {"mode": "rewrite", "spans": ["Entrackr", ...]}
   nemo-text-norm:   {"mode": "normalize", "text": "..."}
   indic-text-norm:  {"mode": "normalize", "text": "...", "lang": "hi"}
@@ -132,6 +136,109 @@ def _run_spacy_ner(req: dict) -> dict:
         if ent.label_ in _SPACY_ALLOWED_TYPES
     ]
     return {"entities": entities}
+
+
+# ── word-lid: L3Cube HingBERT word-level Hindi/English language ID ─────────
+#
+# Tags each word in Roman-script code-mixed text as HI/EN/NE/O so the
+# "hinglish-lid" pipeline's Route B knows which words to transliterate
+# (HI) vs leave alone (EN/NE) — see src/infra/services/text_pipelines.py's
+# step_script_aware_normalize. Not gated — unlike ai4bharat/IndicNER, this
+# model needs no HF_TOKEN.
+
+_WORD_LID_MODEL_ID = "l3cube-pune/hing-bert-lid"
+_word_lid_tokenizer = None
+_word_lid_model = None
+_word_lid_label_aliases: dict[int, str] = {}
+
+# Maps whatever label strings the model's own id2label reports to our
+# normalized 4-tag scheme — built once at load time from the model's actual
+# config rather than assumed, since the model card doesn't document an
+# exact label list. Confirmed empirically: this checkpoint's id2label is
+# just {0: "EN", 1: "HI"} — a flat binary tagger, no BIO/NE/O labels at all
+# — which is also why HF's `pipeline(..., aggregation_strategy="simple")`
+# is the WRONG tool here: "simple" aggregation merges consecutive
+# SAME-LABEL subword tokens into one span regardless of word boundaries, so
+# two adjacent English words ("main office") collapse into a single
+# multi-word "entity" and word-level granularity is lost. This handler
+# instead tags at the subword level directly and merges only WordPiece
+# continuations (##-prefixed) back into their own word — never across a
+# word boundary — using the first subtoken's label per word.
+_LABEL_ALIAS_TABLE = {
+    "hi": "HI", "hin": "HI", "hindi": "HI",
+    "en": "EN", "eng": "EN", "english": "EN",
+    "ne": "NE", "name": "NE", "named_entity": "NE", "ner": "NE",
+    "o": "O", "other": "O", "univ": "O", "mixed": "O", "acronym": "O",
+    "punct": "O", "punctuation": "O",
+}
+
+
+def _load_word_lid_model():
+    global _word_lid_tokenizer, _word_lid_model, _word_lid_label_aliases
+    if _word_lid_model is not None:
+        return _word_lid_tokenizer, _word_lid_model
+
+    from transformers import AutoModelForTokenClassification, AutoTokenizer
+
+    logger.info("Loading %s…", _WORD_LID_MODEL_ID)
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(_WORD_LID_MODEL_ID, local_files_only=True)
+        model = AutoModelForTokenClassification.from_pretrained(_WORD_LID_MODEL_ID, local_files_only=True)
+    except Exception:
+        logger.info("Not fully cached locally yet — downloading %s…", _WORD_LID_MODEL_ID)
+        tokenizer = AutoTokenizer.from_pretrained(_WORD_LID_MODEL_ID)
+        model = AutoModelForTokenClassification.from_pretrained(_WORD_LID_MODEL_ID)
+
+    id2label = getattr(model.config, "id2label", {}) or {}
+    logger.info("word-lid id2label: %s", id2label)
+    _word_lid_label_aliases = {
+        int(idx): _LABEL_ALIAS_TABLE.get(str(raw).lower().lstrip("bi-_"), "O")
+        for idx, raw in id2label.items()
+    }
+
+    model.eval()
+    _word_lid_tokenizer, _word_lid_model = tokenizer, model
+    logger.info("word-lid ready.")
+    return tokenizer, model
+
+
+def _run_word_lid(req: dict) -> dict:
+    text = req.get("text", "")
+    if not text.strip():
+        return {"tokens": []}
+
+    import torch
+
+    tokenizer, model = _load_word_lid_model()
+    encoding = tokenizer(text, return_tensors="pt", return_offsets_mapping=True, truncation=True)
+    offsets = encoding.pop("offset_mapping")[0].tolist()
+    word_ids = encoding.encodings[0].word_ids
+
+    with torch.no_grad():
+        logits = model(**encoding).logits[0]
+    pred_ids = logits.argmax(dim=-1).tolist()
+
+    # Merge subword tokens sharing the same `word_ids()` word index into one
+    # word span, using the FIRST subtoken's predicted label for that word —
+    # never merging across a word boundary (unlike aggregation_strategy).
+    tokens: list[dict] = []
+    current_word_id = None
+    for (start, end), wid, pred_id in zip(offsets, word_ids, pred_ids):
+        if wid is None or start == end:  # special tokens ([CLS]/[SEP]/padding)
+            continue
+        if wid != current_word_id:
+            tokens.append({
+                "word": text[start:end],
+                "tag": _word_lid_label_aliases.get(pred_id, "O"),
+                "start": start,
+                "end": end,
+            })
+            current_word_id = wid
+        else:
+            tokens[-1]["end"] = end
+            tokens[-1]["word"] = text[tokens[-1]["start"]:end]
+
+    return {"tokens": tokens}
 
 
 # ── qwen3-phonetic: Qwen/Qwen3.5-0.8B phonetic respelling of entity spans ───
@@ -305,6 +412,7 @@ def _run_indic_text_norm(req: dict) -> dict:
 _HANDLERS = {
     "indic-ner": ("tag", _run_indic_ner),
     "spacy-ner": ("tag", _run_spacy_ner),
+    "word-lid": ("tag", _run_word_lid),
     "qwen3-phonetic": ("rewrite", _run_qwen3_phonetic),
     "nemo-text-norm": ("normalize", _run_nemo_text_norm),
     "indic-text-norm": ("normalize", _run_indic_text_norm),
