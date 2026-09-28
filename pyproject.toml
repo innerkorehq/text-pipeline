@@ -1,7 +1,7 @@
 [project]
 name = "tts-text-pipeline"
 version = "0.1.0"
-description = "Consolidated text-preprocessing CLI for vidgen — IndicNER, spaCy NER, Qwen3.5 phonetic respelling, NeMo (English) and indic-text-normalization (Indic) semiotic normalization, in ONE venv instead of five. These five stages all run on every TTS call regardless of which synthesis engine/voice is selected, so they're consolidated to avoid duplicating torch/transformers across five separate venvs."
+description = "Consolidated text-preprocessing service — IndicNER, spaCy NER, word-level Hindi/English LID, Qwen3.5 phonetic respelling, NeMo (English) and indic-text-normalization (Indic) semiotic normalization, in ONE service instead of six separate ones."
 requires-python = ">=3.11,<3.13"
 dependencies = [
     # Shared by indic-ner + qwen3-phonetic (and transitively by spacy/nemo)
@@ -42,6 +42,9 @@ dependencies = [
     "tqdm>=4.41.0",
     "wget",
     "wrapt",
+
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
 ]
 
 [tool.uv]

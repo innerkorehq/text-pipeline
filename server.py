@@ -1,45 +1,58 @@
 #!/usr/bin/env python
 """
-Consolidated text-preprocessing CLI — IndicNER, spaCy NER, word-level
+Consolidated text-preprocessing service — IndicNER, spaCy NER, word-level
 Hindi/English LID (L3Cube HingBERT), Qwen3.5-0.8B phonetic respelling, NeMo
 (English) and indic-text-normalization (Indic) semiotic normalization, all
-in ONE venv instead of six. These stages all run on every TTS call
-regardless of which synthesis engine/voice is selected (entity detection ->
-phonetic rewrite -> number/date normalization; word-lid additionally for
-the "hinglish-lid" pipeline's Route B), so splitting them across separate
-venvs was pure duplication (separate copies of torch/transformers for
-stages that are never optional).
+in ONE service instead of six separate ones.
 
-Request (stdin JSON): {"engine": "indic-ner" | "spacy-ner" | "word-lid"
-                                 | "qwen3-phonetic" | "nemo-text-norm"
-                                 | "indic-text-norm",
-                        ...engine-specific fields, unchanged from each
-                        engine's own former synth.py contract}
+Each sub-engine is loaded lazily, on first request for that engine, and
+cached in memory for the lifetime of the process — these stages are
+independent (entity detection -> phonetic rewrite -> number/date
+normalization; word-lid additionally for Hindi/English code-mixed text), so
+a given deployment may only ever need a subset of them.
 
-  indic-ner:        {"mode": "tag", "text": "..."}
-  spacy-ner:        {"mode": "tag", "text": "..."}
-  word-lid:         {"mode": "tag", "text": "..."}
-  qwen3-phonetic:   {"mode": "rewrite", "spans": ["Entrackr", ...]}
-  nemo-text-norm:   {"mode": "normalize", "text": "..."}
-  indic-text-norm:  {"mode": "normalize", "text": "...", "lang": "hi"}
+Endpoints:
+    GET  /health   -> {"status": "ok"}
+    POST /process
+        {"engine": "indic-ner" | "spacy-ner" | "word-lid"
+                  | "qwen3-phonetic" | "nemo-text-norm" | "indic-text-norm",
+         "mode": ..., ...engine-specific fields}
 
-Response (stdout JSON): engine-specific, unchanged — see each section below.
-                        {"ok": false, "error": "..."} on failure.
+          indic-ner:        {"mode": "tag", "text": "..."}
+                             -> {"entities": [{"text","type","start","end","score"}, ...]}
+          spacy-ner:         {"mode": "tag", "text": "..."}
+                             -> {"entities": [{"text","type","start","end"}, ...]}
+          word-lid:          {"mode": "tag", "text": "..."}
+                             -> {"tokens": [{"word","tag","start","end"}, ...]}
+          qwen3-phonetic:    {"mode": "rewrite", "spans": ["Entrackr", ...]}
+                             -> {"rewrites": {"Entrackr": "En-track-er", ...}}
+          nemo-text-norm:    {"mode": "normalize", "text": "..."}
+                             -> {"text": "..."}
+          indic-text-norm:   {"mode": "normalize", "text": "...", "lang": "hi"}
+                             -> {"text": "..."}
+
+        On error: an HTTP error status with a JSON {"detail": "..."} body.
+
+Run: uv run server.py   (or: uvicorn server:app --host 0.0.0.0 --port 8010)
+Env vars: PORT (default 8010), HF_TOKEN (required for the gated indic-ner engine)
 """
 import logging
 import os
-import sys
+from typing import Any, Optional
 
-from protocol import read_request, succeed, fail, quiet_stdout
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 
-logging.basicConfig(level=logging.INFO, stream=sys.stderr)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("text-pipeline")
+
+_DEFAULT_PORT = 8010
 
 
 # ── indic-ner: ai4bharat/IndicNER named-entity recognition ──────────────────
 #
-# Detects PER/ORG/LOC spans in Indic-script narration text so the pipeline
-# can protect them from automatic Indic→Roman transliteration. GATED model —
+# Detects PER/ORG/LOC spans in Indic-script narration text so a caller can
+# protect them from automatic Indic->Roman transliteration. GATED model —
 # requires accepting its terms at https://huggingface.co/ai4bharat/IndicNER
 # and an HF_TOKEN env var.
 
@@ -140,11 +153,9 @@ def _run_spacy_ner(req: dict) -> dict:
 
 # ── word-lid: L3Cube HingBERT word-level Hindi/English language ID ─────────
 #
-# Tags each word in Roman-script code-mixed text as HI/EN/NE/O so the
-# "hinglish-lid" pipeline's Route B knows which words to transliterate
-# (HI) vs leave alone (EN/NE) — see src/infra/services/text_pipelines.py's
-# step_script_aware_normalize. Not gated — unlike ai4bharat/IndicNER, this
-# model needs no HF_TOKEN.
+# Tags each word in Roman-script code-mixed text as HI/EN/NE/O — useful for
+# deciding which words to transliterate (HI) vs leave alone (EN/NE). Not
+# gated — unlike ai4bharat/IndicNER, this model needs no HF_TOKEN.
 
 _WORD_LID_MODEL_ID = "l3cube-pune/hing-bert-lid"
 _word_lid_tokenizer = None
@@ -419,30 +430,49 @@ _HANDLERS = {
 }
 
 
-def main() -> None:
-    req = read_request()
-    engine = req.get("engine")
-    mode = req.get("mode")
+# ── FastAPI app ──────────────────────────────────────────────────────────────
 
-    handler_entry = _HANDLERS.get(engine)
+app = FastAPI(title="text-pipeline")
+
+
+class ProcessRequest(BaseModel):
+    engine: str
+    mode: str
+    text: Optional[str] = None
+    spans: Optional[list[str]] = None
+    lang: Optional[str] = None
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+@app.post("/process")
+def process(req: ProcessRequest):
+    handler_entry = _HANDLERS.get(req.engine)
     if handler_entry is None:
-        fail(f"Unknown engine: {engine!r} (expected one of {sorted(_HANDLERS)})")
-        return
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown engine: {req.engine!r} (expected one of {sorted(_HANDLERS)})",
+        )
     expected_mode, handler = handler_entry
-    if mode != expected_mode:
-        fail(f"Unknown mode: {mode!r} for engine {engine!r} (expected {expected_mode!r})")
-        return
+    if req.mode != expected_mode:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown mode: {req.mode!r} for engine {req.engine!r} (expected {expected_mode!r})",
+        )
 
     try:
-        with quiet_stdout():
-            result = handler(req)
-    except Exception as e:
-        logger.exception("%s failed", engine)
-        fail(str(e))
-        return
+        result: dict[str, Any] = handler(req.model_dump(exclude_none=True))
+    except Exception as exc:
+        logger.exception("%s failed", req.engine)
+        raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}") from exc
 
-    succeed(**result)
+    return result
 
 
 if __name__ == "__main__":
-    main()
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", _DEFAULT_PORT)))

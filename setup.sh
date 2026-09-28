@@ -2,10 +2,10 @@
 # Sets up the isolated venv for the consolidated text-pipeline engine. Safe
 # to re-run.
 #
-# Consolidates 5 previously-separate engines (indic-ner, spacy-ner,
-# qwen3-phonetic, nemo-text-norm, indic-text-norm) into one venv — they all
-# run on every TTS call regardless of synthesis engine/voice, so five
-# separate torch/transformers installs was pure duplication.
+# Consolidates 6 previously-separate engines (indic-ner, spacy-ner,
+# word-lid, qwen3-phonetic, nemo-text-norm, indic-text-norm) into one venv —
+# these stages are commonly used together regardless of synthesis engine/
+# voice, so six separate torch/transformers installs was pure duplication.
 #
 # nemo_text_processing's and indic-text-normalization's pynini dependency has
 # no macOS wheel (manylinux-only) — built from source against Homebrew's
@@ -45,6 +45,6 @@ CPLUS_INCLUDE_PATH="$OPENFST_PREFIX/include" LIBRARY_PATH="$OPENFST_PREFIX/lib" 
 uv pip install --no-deps "nemo_text_processing"
 uv pip install --no-deps "git+https://github.com/kenpath/indic-text-normalization"
 
-echo "text-pipeline venv ready: tts-engines/text-pipeline/.venv"
+echo "text-pipeline venv ready: text-pipeline/.venv"
 echo "Reminder: ai4bharat/IndicNER is gated — accept its terms on HuggingFace and set HF_TOKEN in .env."
 echo "Qwen/Qwen3.5-0.8B model weights download lazily on first use."
