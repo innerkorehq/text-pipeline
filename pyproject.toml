@@ -2,7 +2,7 @@
 name = "tts-text-pipeline"
 version = "0.1.0"
 description = "Consolidated text-preprocessing service — IndicNER, spaCy NER, word-level Hindi/English LID, Qwen3.5 phonetic respelling, NeMo (English) and indic-text-normalization (Indic) semiotic normalization, in ONE service instead of six separate ones."
-requires-python = ">=3.11,<3.13"
+requires-python = ">=3.13"
 dependencies = [
     # Shared by indic-ner + qwen3-phonetic (and transitively by spacy/nemo)
     "torch>=2.4",

@@ -25,7 +25,7 @@ if [ -d .venv ] && [ ! -f .venv/bin/python ]; then
     rm -rf .venv
 fi
 
-uv venv --python 3.11
+uv venv --python 3.13
 uv sync
 
 # pynini needs OpenFST's headers/libs to build from source.

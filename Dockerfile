@@ -5,7 +5,7 @@
 # wheel on PyPI). This Dockerfile uses Debian's libfst-dev instead; if it
 # breaks, prefer running this engine natively via setup.sh over debugging
 # the container build.
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential libfst-dev git wget \
@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir uv
 
 WORKDIR /app
 COPY pyproject.toml uv.lock setup.sh ./
-RUN uv venv --python 3.11 && uv sync --frozen
+RUN uv venv --python 3.13 && uv sync --frozen
 RUN uv pip install "pynini>=2.1.7" \
     && uv pip install --no-deps "nemo_text_processing" \
     && uv pip install --no-deps "git+https://github.com/kenpath/indic-text-normalization"
