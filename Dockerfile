@@ -15,12 +15,12 @@ RUN pip install --no-cache-dir uv
 
 WORKDIR /app
 COPY pyproject.toml uv.lock setup.sh ./
-RUN uv venv --python 3.13 && uv sync --frozen
+RUN uv venv --python 3.13 && uv sync --frozen --extra http
 RUN uv pip install "pynini>=2.1.7" \
     && uv pip install --no-deps "nemo_text_processing" \
     && uv pip install --no-deps "git+https://github.com/kenpath/indic-text-normalization"
 
-COPY server.py ./
+COPY engine.py server.py ./
 
 ENV PORT=8010
 EXPOSE 8010

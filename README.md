@@ -1,7 +1,11 @@
 # text-pipeline
 
-A standalone text-processing HTTP service for TTS/speech pipelines —
-6 tools in one process, each loaded lazily on first use:
+A standalone text-processing library for TTS/speech pipelines — 6 tools,
+each loaded lazily on first use. `engine.py` is a plain Python module
+(`run({"engine": ..., "mode": ..., ...})`, no web framework); `server.py` is
+an optional HTTP wrapper (`uv sync --extra http`) for standalone use.
+vidgen calls `engine.py` in-process, one warm process per tool (no HTTP,
+no ports):
 
 | engine | what it does |
 |---|---|
@@ -32,7 +36,7 @@ dependencies (torch/transformers).
 ```bash
 export HF_TOKEN=hf_...   # only needed for indic-ner
 bash setup.sh
-uv run server.py          # PORT=8010 by default
+uv run --extra http server.py          # PORT=8010 by default
 ```
 
 ## API
