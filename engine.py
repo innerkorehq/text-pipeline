@@ -98,12 +98,25 @@ def _run_indic_ner(req: dict) -> dict:
 # trained, complements IndicNER's Indic-script training for Hinglish/
 # code-mixed narration.
 
-_SPACY_MODEL_ID = "en_core_web_sm"
+_SPACY_HF_REPO = "spacy/en_core_web_sm"
 _SPACY_ALLOWED_TYPES = {
     "ORG", "PERSON", "GPE", "LOC", "PRODUCT", "EVENT", "LAW", "NORP",
     "WORK_OF_ART", "FAC", "LANGUAGE",
 }
 _spacy_nlp = None
+
+
+def _hf_snapshot(repo_id: str, revision: str | None = None, allow_patterns=None) -> str:
+    """Path of `repo_id` in the central Hugging Face cache (~/.cache/huggingface,
+    or $HF_HOME), downloading it there only if it isn't cached yet — weights
+    must never live in the engine's directory or venv."""
+    from huggingface_hub import snapshot_download
+
+    kwargs = dict(repo_id=repo_id, revision=revision, allow_patterns=allow_patterns)
+    try:
+        return snapshot_download(local_files_only=True, **kwargs)  # no network when cached
+    except Exception:
+        return snapshot_download(**kwargs)
 
 
 def _load_spacy_model():
@@ -113,8 +126,10 @@ def _load_spacy_model():
 
     import spacy
 
-    logger.info("Loading %s…", _SPACY_MODEL_ID)
-    _spacy_nlp = spacy.load(_SPACY_MODEL_ID, disable=["lemmatizer"])
+    logger.info("Loading %s…", _SPACY_HF_REPO)
+    # The model comes from the central HF cache, not a pip-installed package
+    # inside the venv.
+    _spacy_nlp = spacy.load(_hf_snapshot(_SPACY_HF_REPO), disable=["lemmatizer"])
     logger.info("spaCy NER ready.")
     return _spacy_nlp
 

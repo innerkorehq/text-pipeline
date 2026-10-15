@@ -20,7 +20,6 @@ dependencies = [
 
     # spacy-ner
     "spacy>=3.8",
-    "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
     # spacy.cli imports click directly but doesn't declare it as a hard dep
     # (pulled in transitively via typer in some installs, not this one).
     "click",

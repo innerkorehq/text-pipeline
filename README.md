@@ -16,6 +16,9 @@ no ports):
 | `nemo-text-norm` | English semiotic text normalization (numbers, dates, currency) via [NVIDIA NeMo Text Processing](https://github.com/NVIDIA/NeMo-text-processing). |
 | `indic-text-norm` | The same, for 19 Indian languages, via [indic-text-normalization](https://github.com/kenpath/indic-text-normalization). |
 
+Models (including spaCy's) are loaded from the central Hugging Face cache, never
+from the repo or the venv.
+
 These are genuinely independent, generically useful NLP tools — nothing
 here is TTS-specific or tied to any particular pipeline; they're bundled
 into one service because they're commonly used together and share heavy
