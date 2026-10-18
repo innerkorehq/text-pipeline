@@ -35,12 +35,9 @@ dependencies = [
     "editdistance",
     "inflect",
     "joblib",
-    "pandas",
     "regex",
     "sacremoses>=0.0.43",
     "tqdm>=4.41.0",
-    "wget",
-    "wrapt",
 
 ]
 
